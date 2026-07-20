@@ -11,7 +11,7 @@ HEADERS = {
 
 SITES = {
     "ぽけらく(イベント)": "https://pokemongo-raku.com/postcategory/event",
-    "ぽけまぴ(フィールドリサーチ)": "https://pokemongo-get.com/research_fi/"
+    "ぽけらく(フィールドリサーチ)": "https://pokemongo-raku.com/post4966"
 }
 
 HISTORY_FILE = "history.json"
@@ -29,24 +29,18 @@ def save_history(history):
         json.dump(history, f)
 
 
-# 🔥 ぽけらく用
-def fetch_raku(url):
+# 🔵 イベント一覧
+def fetch_list(url):
     res = requests.get(url, headers=HEADERS)
     soup = BeautifulSoup(res.text, "html.parser")
 
     articles = []
 
     for item in soup.select("article")[:5]:
-        title_tag = item.select_one("h2, h3")
-        link_tag = item.select_one("a")
+        title = item.select_one("h2, h3").text.strip()
+        link = item.select_one("a")["href"]
+
         img_tag = item.select_one("img")
-
-        if not title_tag or not link_tag:
-            continue
-
-        title = title_tag.text.strip()
-        link = link_tag["href"]
-
         img = img_tag.get("src") if img_tag else None
 
         articles.append({
@@ -58,48 +52,25 @@ def fetch_raku(url):
     return articles
 
 
-# 🔥 ぽけまぴ用（ここが重要）
-def fetch_get(url):
+# 🔴 固定ページ（更新検知）
+def fetch_single(url):
     res = requests.get(url, headers=HEADERS)
-
-    if res.status_code != 200:
-        print("取得失敗:", res.status_code)
-        return []
-
     soup = BeautifulSoup(res.text, "html.parser")
 
-    articles = []
+    title = soup.select_one("h1").text.strip()
 
-    # 🔥 ぽけまぴは「記事カード」が違う
-    items = soup.select(".entry-card")  # ←ここがポイント
+    img_tag = soup.select_one("img")
+    img = img_tag.get("src") if img_tag else None
 
-    for item in items[:5]:
-        title_tag = item.select_one(".entry-card-title")
-        link_tag = item.select_one("a")
-        img_tag = item.select_one("img")
-
-        if not title_tag or not link_tag:
-            continue
-
-        title = title_tag.text.strip()
-        link = link_tag["href"]
-
-        img = None
-        if img_tag:
-            img = img_tag.get("src")
-
-        articles.append({
-            "title": title,
-            "link": link,
-            "img": img
-        })
-
-    return articles
+    return [{
+        "title": title,
+        "link": url,
+        "img": img
+    }]
 
 
 def send_discord(name, new_articles):
     content = f"📢 **{name} 更新情報**\n\n"
-
     embeds = []
 
     for art in new_articles:
@@ -127,14 +98,10 @@ def main():
     for name, url in SITES.items():
         print(f"\n--- {name} ---")
 
-        if "ぽけらく" in name:
-            articles = fetch_raku(url)
+        if "フィールドリサーチ" in name:
+            articles = fetch_single(url)
         else:
-            articles = fetch_get(url)
-
-        if not articles:
-            print("記事取得失敗")
-            continue
+            articles = fetch_list(url)
 
         old_titles = history.get(name, [])
         new_articles = []
@@ -151,7 +118,7 @@ def main():
 
         send_discord(name, new_articles)
 
-        history[name] = [a["title"] for a in articles][:20]
+        history[name] = [a["title"] for a in articles]
 
     save_history(history)
 
