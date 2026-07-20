@@ -2,24 +2,43 @@ import requests
 import feedparser
 import json
 import os
+import re
 
 print("===== START =====")
 
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
-print("Webhook OK")
+
+# HTMLタグ除去
+def clean_html(text):
+    text = re.sub('<.*?>', '', text)
+    text = text.replace('\n', '')
+    return text.strip()
+
+# 画像URL取得（あれば）
+def get_image(entry):
+    # media:content 対応
+    if "media_content" in entry:
+        return entry.media_content[0]["url"]
+
+    # summary内のimgタグ取得
+    match = re.search(r'<img.*?src="(.*?)"', entry.summary)
+    if match:
+        return match.group(1)
+
+    return None
 
 # フィード読み込み
 with open("feeds.json", "r", encoding="utf-8") as f:
     feeds = json.load(f)
 
-# 送信済みデータ読み込み
+# 送信済みデータ
 try:
     with open("sent.json", "r", encoding="utf-8") as f:
         sent = json.load(f)
         print("sent.json 読み込みOK")
 except:
     sent = {}
-    print("sent.json なし（新規作成）")
+    print("sent.json 新規作成")
 
 updated = False
 
@@ -28,7 +47,6 @@ for feed in feeds:
     url = feed["rss"]
 
     print(f"\n--- {name} ---")
-    print("URL:", url)
 
     parsed = feedparser.parse(url)
 
@@ -41,18 +59,26 @@ for feed in feeds:
 
     print("タイトル:", latest.title)
 
-    # 初回でも投稿するように修正
+    # 新着チェック
     if sent.get(name) != post_id:
+
+        description = clean_html(latest.summary)
+        image_url = get_image(latest)
 
         embed = {
             "title": latest.title,
             "url": latest.link,
-            "description": latest.summary,
+            "description": description[:200],  # 長すぎ防止
             "color": 5814783,
             "footer": {
                 "text": name
             }
         }
+
+        # 画像があれば追加
+        if image_url:
+            embed["image"] = {"url": image_url}
+            print("画像あり:", image_url)
 
         data = {
             "embeds": [embed]
@@ -70,7 +96,7 @@ for feed in feeds:
             print("❌ 投稿失敗:", res.text)
 
     else:
-        print("⏩ 新着なし（スキップ）")
+        print("⏩ 新着なし")
 
 # 保存
 if updated:
