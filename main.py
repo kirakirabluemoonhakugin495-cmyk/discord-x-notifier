@@ -2,19 +2,22 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import json
-import difflib
 
 
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
+
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
 
-SITES = {
-    "ぽけらく(イベント)": "https://pokemongo-raku.com/postcategory/event",
-    "フィールドリサーチ": "https://pokemongo-raku.com/post4966"
+SITE = {
+    "ぽけらく(イベント)": 
+        "https://pokemongo-raku.com/postcategory/event",
+
+    "フィールドリサーチ":
+        "https://pokemongo-raku.com/post4966"
 }
 
 
@@ -22,9 +25,9 @@ HISTORY_FILE = "history.json"
 
 
 
-# =========================
-# 履歴
-# =========================
+# -----------------------
+# history
+# -----------------------
 
 def load_history():
 
@@ -35,13 +38,15 @@ def load_history():
             "r",
             encoding="utf-8"
         ) as f:
+
             return json.load(f)
+
 
     return {}
 
 
 
-def save_history(history):
+def save_history(data):
 
     with open(
         HISTORY_FILE,
@@ -50,7 +55,7 @@ def save_history(history):
     ) as f:
 
         json.dump(
-            history,
+            data,
             f,
             ensure_ascii=False,
             indent=2
@@ -58,11 +63,11 @@ def save_history(history):
 
 
 
-# =========================
+# -----------------------
 # 画像取得
-# =========================
+# -----------------------
 
-def get_article_image(url):
+def get_image(url):
 
     try:
 
@@ -79,64 +84,32 @@ def get_article_image(url):
         )
 
 
-        # OGP画像
-        og = soup.select_one(
+        img = soup.select_one(
             'meta[property="og:image"]'
         )
 
 
-        if og and og.get("content"):
+        if img:
 
-            img = og["content"]
-
-
-            if img.startswith("//"):
-                img = "https:" + img
+            return img.get(
+                "content"
+            )
 
 
-            if img.startswith("http"):
-                return img
+    except:
 
-
-
-        # Twitterカード画像
-        tw = soup.select_one(
-            'meta[name="twitter:image"]'
-        )
-
-
-        if tw and tw.get("content"):
-
-            img = tw["content"]
-
-
-            if img.startswith("//"):
-                img = "https:" + img
-
-
-            if img.startswith("http"):
-                return img
-
-
-
-    except Exception as e:
-
-        print(
-            "画像取得失敗:",
-            e
-        )
+        pass
 
 
     return None
 
 
 
+# -----------------------
+# 記事取得
+# -----------------------
 
-# =========================
-# イベント記事取得
-# =========================
-
-def fetch_event_articles(url):
+def get_articles(url):
 
     res = requests.get(
         url,
@@ -151,201 +124,100 @@ def fetch_event_articles(url):
     )
 
 
-    articles = []
+    result = []
 
 
-    for item in soup.select("article")[:10]:
+    for article in soup.select("article")[:5]:
 
-        title_tag = item.select_one(
+
+        title = article.select_one(
             "h2,h3"
         )
 
 
-        link_tag = item.select_one(
+        link = article.select_one(
             "a"
         )
 
 
-        if not title_tag or not link_tag:
+        if not title or not link:
             continue
 
 
-        title = title_tag.text.strip()
 
-
-        link = link_tag.get(
+        url = link.get(
             "href"
         )
 
 
-        if not link:
-            continue
+        result.append({
+
+            "title":
+                title.text.strip(),
+
+            "url":
+                url,
+
+            "image":
+                get_image(url)
+
+        })
+
+
+    return result
 
 
 
-        img = get_article_image(
-            link
-        )
-
-
-
-        articles.append(
-            {
-                "title": title,
-                "link": link,
-                "img": img
-            }
-        )
-
-
-    return articles
-
-
-
-
-# =========================
-# 差分取得
-# =========================
-
-def fetch_field_diff(
-        url,
-        history
-):
-
-    res = requests.get(
-        url,
-        headers=HEADERS,
-        timeout=20
-    )
-
-
-    soup = BeautifulSoup(
-        res.text,
-        "html.parser"
-    )
-
-
-    for tag in soup(
-        [
-            "script",
-            "style",
-            "nav",
-            "footer"
-        ]
-    ):
-        tag.decompose()
-
-
-
-    text = soup.get_text(
-        "\n"
-    )
-
-
-    text = "\n".join(
-        x.strip()
-        for x in text.splitlines()
-        if x.strip()
-    )
-
-
-    old = history.get(
-        "field_text",
-        ""
-    )
-
-
-    diff = difflib.unified_diff(
-        old.splitlines(),
-        text.splitlines(),
-        lineterm=""
-    )
-
-
-    changes = []
-
-
-    for line in diff:
-
-        if (
-            line.startswith("+")
-            and not line.startswith("+++")
-        ):
-
-            changes.append(
-                line[1:]
-            )
-
-
-    history["field_text"] = text
-
-
-    img = get_article_image(
-        url
-    )
-
-
-    return changes, img
-
-
-
-
-# =========================
+# -----------------------
 # Discord送信
-# =========================
+# -----------------------
 
-def send_articles(
-        name,
-        articles
-):
+def send_discord(name, articles):
+
 
     embeds = []
 
 
-    for art in articles:
+    for article in articles:
 
 
         embed = {
 
             "title":
-                art["title"],
+                article["title"],
 
             "url":
-                art["link"],
+                article["url"],
 
             "color":
                 5814783
+
         }
 
 
-
-        if art.get("img"):
+        if article["image"]:
 
             embed["image"] = {
-                "url": art["img"]
+
+                "url":
+                    article["image"]
+
             }
 
 
-
-        embeds.append(
-            embed
-        )
+        embeds.append(embed)
 
 
 
     data = {
 
         "content":
-            f"📢 **{name} 更新情報**"
+            f"📢 **{name} 最新情報**",
+
+        "embeds":
+            embeds[:10]
 
     }
-
-
-
-    if embeds:
-
-        data["embeds"] = embeds[:10]
-
 
 
     res = requests.post(
@@ -355,68 +227,15 @@ def send_articles(
 
 
     print(
-        "送信:",
+        "Discord:",
         res.status_code
     )
 
 
 
-
-def send_field_update(
-        changes,
-        img
-):
-
-    description = ""
-
-
-    for c in changes[:30]:
-
-        description += (
-            f"＋ {c}\n"
-        )
-
-
-    embed = {
-
-        "title":
-            "🆕 フィールドリサーチ更新",
-
-        "description":
-            description[:4000],
-
-        "color":
-            65280
-    }
-
-
-
-    if img:
-
-        embed["image"] = {
-            "url": img
-        }
-
-
-
-    res = requests.post(
-        WEBHOOK_URL,
-        json={
-            "embeds":[embed]
-        }
-    )
-
-
-    print(
-        "差分送信:",
-        res.status_code
-    )
-
-
-
-# =========================
-# メイン
-# =========================
+# -----------------------
+# main
+# -----------------------
 
 def main():
 
@@ -429,114 +248,84 @@ def main():
 
 
 
-    # -----------------
-    # イベント
-    # -----------------
+    for name,url in SITE.items():
 
-    print(
-        "\n--- ぽけらくイベント ---"
-    )
-
-
-    articles = fetch_event_articles(
-        SITES["ぽけらく(イベント)"]
-    )
-
-
-
-    old = history.get(
-        "events",
-        []
-    )
-
-
-
-    new_articles = [
-
-        a for a in articles
-
-        if a["title"] not in old
-
-    ]
-
-
-
-    if new_articles:
 
         print(
-            len(new_articles),
-            "件更新"
+            "\n---",
+            name,
+            "---"
         )
 
 
-        send_articles(
-            "ぽけらく(イベント)",
-            new_articles
+        articles = get_articles(url)
+
+
+
+        if not articles:
+
+            print(
+                "記事なし"
+            )
+
+            continue
+
+
+
+        # 前回通知済み
+        old = history.get(
+            name,
+            []
         )
 
 
-    else:
 
-        print(
-            "更新なし"
-        )
+        # 新しい記事だけ
+        new_articles = [
 
+            a for a in articles
 
+            if a["url"] not in old
 
-    history["events"] = [
-
-        a["title"]
-
-        for a in articles[:20]
-
-    ]
+        ]
 
 
 
+        if new_articles:
+
+            print(
+                len(new_articles),
+                "件送信"
+            )
 
 
-    # -----------------
-    # フィールド
-    # -----------------
-
-    print(
-        "\n--- フィールドリサーチ ---"
-    )
+            send_discord(
+                name,
+                new_articles
+            )
 
 
-    changes, img = fetch_field_diff(
-        SITES["フィールドリサーチ"],
-        history
-    )
+        else:
+
+            print(
+                "新規なし"
+            )
 
 
 
-    if changes:
+        history[name] = [
 
-        print(
-            "差分あり:",
-            len(changes)
-        )
+            a["url"]
 
+            for a in articles
 
-        send_field_update(
-            changes,
-            img
-        )
-
-
-    else:
-
-        print(
-            "変更なし"
-        )
+        ]
 
 
 
     save_history(
         history
     )
-
 
 
     print(
