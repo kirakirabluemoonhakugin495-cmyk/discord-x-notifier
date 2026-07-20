@@ -5,6 +5,15 @@ import os
 
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
 
+print("Webhook:", WEBHOOK_URL[:30])  # 確認用（全部出さない）
+
+res = requests.post(WEBHOOK_URL, json={
+    "content": "テスト投稿"
+})
+
+print("Status:", res.status_code)
+print("Response:", res.text)
+
 # 監視対象読み込み
 with open("feeds.json", "r", encoding="utf-8") as f:
     feeds = json.load(f)
