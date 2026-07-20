@@ -10,8 +10,8 @@ HEADERS = {
 }
 
 SITES = {
-    "ポケマピ": "https://pokemongo-get.com/pokego02416/",
-    "ポケらく": "https://pokemongo-raku.com/postcategory/event"
+    "ぽけらく(イベント)": "https://pokemongo-raku.com/postcategory/event",
+    "ぽけまぴ(フィールドリサーチ)": "https://pokemongo-get.com/research_fi/"
 }
 
 HISTORY_FILE = "history.json"
@@ -29,17 +29,24 @@ def save_history(history):
         json.dump(history, f)
 
 
-# 🔥 記事リスト取得（複数）
 def fetch_articles(url):
     res = requests.get(url, headers=HEADERS)
+
+    if res.status_code != 200:
+        print("取得失敗:", res.status_code)
+        return []
+
     soup = BeautifulSoup(res.text, "html.parser")
 
     articles = []
 
-    for a in soup.select("article")[:5]:  # 最大5件
-        title_tag = a.select_one("h2, h3")
-        link_tag = a.select_one("a")
-        img_tag = a.select_one("img")
+    # サイトごとの対応
+    items = soup.select("article")
+
+    for item in items[:5]:
+        title_tag = item.select_one("h2, h3")
+        link_tag = item.select_one("a")
+        img_tag = item.select_one("img")
 
         if not title_tag or not link_tag:
             continue
@@ -47,13 +54,18 @@ def fetch_articles(url):
         title = title_tag.text.strip()
         link = link_tag["href"]
 
-        # 🔥 イベントのみ抽出
-        if "イベント" not in title:
-            continue
+        # 相対URL対策
+        if link.startswith("/"):
+            base = "/".join(url.split("/")[:3])
+            link = base + link
 
         img = None
-        if img_tag and img_tag.get("src"):
-            img = img_tag["src"]
+        if img_tag:
+            img = img_tag.get("src") or img_tag.get("data-src")
+
+            # 画像URL補正
+            if img and img.startswith("//"):
+                img = "https:" + img
 
         articles.append({
             "title": title,
@@ -64,17 +76,28 @@ def fetch_articles(url):
     return articles
 
 
-def send_discord_batch(name, new_articles):
+def send_discord(name, new_articles):
+    content = f"📢 **{name} 更新情報**\n\n"
+
+    embeds = []
+
     for art in new_articles:
-        data = {
-            "content": f"--- {name} ---\n{art['title']}\n{art['link']}"
-        }
+        content += f"🔹 {art['title']}\n{art['link']}\n\n"
 
         if art["img"]:
-            data["embeds"] = [{"image": {"url": art["img"]}}]
+            embeds.append({
+                "image": {"url": art["img"]}
+            })
 
-        res = requests.post(WEBHOOK_URL, json=data)
-        print("送信:", res.status_code)
+    data = {
+        "content": content[:1800]  # 長すぎ防止
+    }
+
+    if embeds:
+        data["embeds"] = embeds[:10]
+
+    res = requests.post(WEBHOOK_URL, json=data)
+    print("送信:", res.status_code)
 
 
 def main():
@@ -88,7 +111,7 @@ def main():
         articles = fetch_articles(url)
 
         if not articles:
-            print("取得失敗 or 記事なし")
+            print("記事取得失敗")
             continue
 
         old_titles = history.get(name, [])
@@ -102,11 +125,10 @@ def main():
             print("更新なし")
             continue
 
-        print(f"{len(new_articles)}件の新規記事")
+        print(f"{len(new_articles)}件の更新")
 
-        send_discord_batch(name, new_articles)
+        send_discord(name, new_articles)
 
-        # 履歴更新（最大20件保持）
         history[name] = [a["title"] for a in articles][:20]
 
     save_history(history)
