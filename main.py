@@ -8,19 +8,36 @@ print("===== START =====")
 
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
 
-# HTMLタグ除去
+# ✅ HTML整形（改行・URL除去）
 def clean_html(text):
+    # 改行タグを改行に変換
+    text = re.sub(r'<br\s*/?>', '\n', text)
+    text = re.sub(r'</p>', '\n', text)
+
+    # HTMLタグ削除
     text = re.sub('<.*?>', '', text)
-    text = text.replace('\n', '')
+
+    # URL削除
+    text = re.sub(r'http\S+', '', text)
+
+    # 余計な空白整理
+    text = re.sub(r'\n+', '\n', text)
+
     return text.strip()
 
-# 画像URL取得（あれば）
+# ✅ 画像取得（可能な限り）
 def get_image(entry):
-    # media:content 対応
+    # media:content
     if "media_content" in entry:
         return entry.media_content[0]["url"]
 
-    # summary内のimgタグ取得
+    # enclosure
+    if "links" in entry:
+        for link in entry.links:
+            if link.get("type", "").startswith("image"):
+                return link.get("href")
+
+    # HTML内img
     match = re.search(r'<img.*?src="(.*?)"', entry.summary)
     if match:
         return match.group(1)
@@ -31,14 +48,12 @@ def get_image(entry):
 with open("feeds.json", "r", encoding="utf-8") as f:
     feeds = json.load(f)
 
-# 送信済みデータ
+# 送信済み
 try:
     with open("sent.json", "r", encoding="utf-8") as f:
         sent = json.load(f)
-        print("sent.json 読み込みOK")
 except:
     sent = {}
-    print("sent.json 新規作成")
 
 updated = False
 
@@ -57,18 +72,18 @@ for feed in feeds:
     latest = parsed.entries[0]
     post_id = latest.link
 
-    print("タイトル:", latest.title)
-
-    # 新着チェック
     if sent.get(name) != post_id:
 
         description = clean_html(latest.summary)
         image_url = get_image(latest)
 
+        # 👉 読みやすくする
+        description = description[:200]
+
         embed = {
             "title": latest.title,
             "url": latest.link,
-            "description": description[:200],  # 長すぎ防止
+            "description": description,
             "color": 5814783,
             "footer": {
                 "text": name
@@ -78,30 +93,23 @@ for feed in feeds:
         # 画像があれば追加
         if image_url:
             embed["image"] = {"url": image_url}
-            print("画像あり:", image_url)
+            print("画像:", image_url)
+        else:
+            print("画像なし")
 
-        data = {
+        res = requests.post(WEBHOOK_URL, json={
             "embeds": [embed]
-        }
+        })
 
-        res = requests.post(WEBHOOK_URL, json=data)
-
-        print("送信ステータス:", res.status_code)
+        print("送信:", res.status_code)
 
         if res.status_code == 204:
             sent[name] = post_id
             updated = True
-            print("✅ 投稿成功")
-        else:
-            print("❌ 投稿失敗:", res.text)
-
-    else:
-        print("⏩ 新着なし")
 
 # 保存
 if updated:
     with open("sent.json", "w", encoding="utf-8") as f:
         json.dump(sent, f, ensure_ascii=False, indent=2)
-    print("💾 sent.json 更新")
 
 print("===== END =====")
