@@ -21,13 +21,15 @@ SITES = {
 HISTORY_FILE = "history.json"
 
 
-# -----------------------
+
+# =========================
 # 履歴
-# -----------------------
+# =========================
 
 def load_history():
 
     if os.path.exists(HISTORY_FILE):
+
         with open(
             HISTORY_FILE,
             "r",
@@ -46,6 +48,7 @@ def save_history(history):
         "w",
         encoding="utf-8"
     ) as f:
+
         json.dump(
             history,
             f,
@@ -55,41 +58,83 @@ def save_history(history):
 
 
 
-# -----------------------
+# =========================
 # 画像取得
-# -----------------------
+# =========================
 
-def get_image(img_tag):
+def get_article_image(url):
 
-    if not img_tag:
-        return None
+    try:
 
-    img = (
-        img_tag.get("src")
-        or img_tag.get("data-src")
-        or img_tag.get("data-original")
-    )
-
-
-    if not img:
-        return None
+        res = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=15
+        )
 
 
-    if img.startswith("//"):
-        img = "https:" + img
+        soup = BeautifulSoup(
+            res.text,
+            "html.parser"
+        )
 
 
-    if not img.startswith("http"):
-        return None
+        # OGP画像
+        og = soup.select_one(
+            'meta[property="og:image"]'
+        )
 
 
-    return img
+        if og and og.get("content"):
+
+            img = og["content"]
+
+
+            if img.startswith("//"):
+                img = "https:" + img
+
+
+            if img.startswith("http"):
+                return img
 
 
 
-# -----------------------
-# ぽけらく一覧取得
-# -----------------------
+        # Twitterカード画像
+        tw = soup.select_one(
+            'meta[name="twitter:image"]'
+        )
+
+
+        if tw and tw.get("content"):
+
+            img = tw["content"]
+
+
+            if img.startswith("//"):
+                img = "https:" + img
+
+
+            if img.startswith("http"):
+                return img
+
+
+
+    except Exception as e:
+
+        print(
+            "画像取得失敗:",
+            e
+        )
+
+
+    return None
+
+
+
+
+# =========================
+# イベント記事取得
+# =========================
 
 def fetch_event_articles(url):
 
@@ -98,6 +143,7 @@ def fetch_event_articles(url):
         headers=HEADERS,
         timeout=20
     )
+
 
     soup = BeautifulSoup(
         res.text,
@@ -114,6 +160,7 @@ def fetch_event_articles(url):
             "h2,h3"
         )
 
+
         link_tag = item.select_one(
             "a"
         )
@@ -125,6 +172,7 @@ def fetch_event_articles(url):
 
         title = title_tag.text.strip()
 
+
         link = link_tag.get(
             "href"
         )
@@ -134,9 +182,11 @@ def fetch_event_articles(url):
             continue
 
 
-        img = get_image(
-            item.select_one("img")
+
+        img = get_article_image(
+            link
         )
+
 
 
         articles.append(
@@ -152,11 +202,15 @@ def fetch_event_articles(url):
 
 
 
-# -----------------------
-# フィールドリサーチ差分
-# -----------------------
 
-def fetch_page_diff(url, history):
+# =========================
+# 差分取得
+# =========================
+
+def fetch_field_diff(
+        url,
+        history
+):
 
     res = requests.get(
         url,
@@ -171,7 +225,6 @@ def fetch_page_diff(url, history):
     )
 
 
-    # 不要部分削除
     for tag in soup(
         [
             "script",
@@ -218,6 +271,7 @@ def fetch_page_diff(url, history):
             line.startswith("+")
             and not line.startswith("+++")
         ):
+
             changes.append(
                 line[1:]
             )
@@ -226,8 +280,8 @@ def fetch_page_diff(url, history):
     history["field_text"] = text
 
 
-    img = get_image(
-        soup.select_one("img")
+    img = get_article_image(
+        url
     )
 
 
@@ -235,11 +289,12 @@ def fetch_page_diff(url, history):
 
 
 
-# -----------------------
-# Discord送信
-# -----------------------
 
-def send_article_embed(
+# =========================
+# Discord送信
+# =========================
+
+def send_articles(
         name,
         articles
 ):
@@ -249,11 +304,19 @@ def send_article_embed(
 
     for art in articles:
 
+
         embed = {
-            "title": art["title"],
-            "url": art["link"],
-            "color": 5814783
+
+            "title":
+                art["title"],
+
+            "url":
+                art["link"],
+
+            "color":
+                5814783
         }
+
 
 
         if art.get("img"):
@@ -263,20 +326,26 @@ def send_article_embed(
             }
 
 
+
         embeds.append(
             embed
         )
 
 
+
     data = {
+
         "content":
             f"📢 **{name} 更新情報**"
+
     }
+
 
 
     if embeds:
 
         data["embeds"] = embeds[:10]
+
 
 
     res = requests.post(
@@ -292,19 +361,16 @@ def send_article_embed(
 
 
 
-def send_diff_embed(
+
+def send_field_update(
         changes,
         img
 ):
 
-    if not changes:
-        return
-
-
     description = ""
 
 
-    for c in changes[:20]:
+    for c in changes[:30]:
 
         description += (
             f"＋ {c}\n"
@@ -324,6 +390,7 @@ def send_diff_embed(
     }
 
 
+
     if img:
 
         embed["image"] = {
@@ -331,16 +398,12 @@ def send_diff_embed(
         }
 
 
-    data = {
-        "embeds":[
-            embed
-        ]
-    }
-
 
     res = requests.post(
         WEBHOOK_URL,
-        json=data
+        json={
+            "embeds":[embed]
+        }
     )
 
 
@@ -351,9 +414,9 @@ def send_diff_embed(
 
 
 
-# -----------------------
+# =========================
 # メイン
-# -----------------------
+# =========================
 
 def main():
 
@@ -366,7 +429,10 @@ def main():
 
 
 
+    # -----------------
     # イベント
+    # -----------------
+
     print(
         "\n--- ぽけらくイベント ---"
     )
@@ -377,10 +443,12 @@ def main():
     )
 
 
+
     old = history.get(
         "events",
         []
     )
+
 
 
     new_articles = [
@@ -392,6 +460,7 @@ def main():
     ]
 
 
+
     if new_articles:
 
         print(
@@ -400,7 +469,7 @@ def main():
         )
 
 
-        send_article_embed(
+        send_articles(
             "ぽけらく(イベント)",
             new_articles
         )
@@ -413,24 +482,33 @@ def main():
         )
 
 
+
     history["events"] = [
+
         a["title"]
+
         for a in articles[:20]
+
     ]
 
 
 
-    # フィールドリサーチ
+
+
+    # -----------------
+    # フィールド
+    # -----------------
 
     print(
         "\n--- フィールドリサーチ ---"
     )
 
 
-    changes, img = fetch_page_diff(
+    changes, img = fetch_field_diff(
         SITES["フィールドリサーチ"],
         history
     )
+
 
 
     if changes:
@@ -441,7 +519,7 @@ def main():
         )
 
 
-        send_diff_embed(
+        send_field_update(
             changes,
             img
         )
@@ -458,6 +536,7 @@ def main():
     save_history(
         history
     )
+
 
 
     print(
