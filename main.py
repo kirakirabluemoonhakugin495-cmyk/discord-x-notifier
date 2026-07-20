@@ -10,8 +10,8 @@ HEADERS = {
 }
 
 ACCOUNTS = {
-    "ポケマピ": "https://nitter.net/pokemapi",
-    "ポケらく": "https://nitter.net/pokeraku_app"
+    "ポケマピ": "https://nitter.poast.org/pokemapi",
+    "ポケらく": "https://nitter.poast.org/pokeraku_app"
 }
 
 HISTORY_FILE = "history.json"
@@ -29,25 +29,26 @@ def save_history(history):
         json.dump(history, f)
 
 
-def fetch_latest(account, url):
+def fetch_latest(url):
     try:
         res = requests.get(url, headers=HEADERS)
-        if res.status_code != 200:
-            print(f"取得失敗: {res.status_code}")
-            return None
-
         soup = BeautifulSoup(res.text, "html.parser")
-        tweet = soup.select_one(".timeline-item")
 
-        if not tweet:
+        # 🔥 新しい取得方法
+        tweets = soup.select(".timeline-item")
+
+        if not tweets:
             return None
 
-        text = tweet.select_one(".tweet-content").text.strip()
-        img_tag = tweet.select_one("img")
+        tweet = tweets[0]
 
+        text_tag = tweet.select_one(".tweet-content")
+        text = text_tag.text.strip() if text_tag else ""
+
+        img_tag = tweet.select_one("img")
         img_url = None
         if img_tag:
-            img_url = "https://nitter.net" + img_tag["src"]
+            img_url = "https://nitter.poast.org" + img_tag["src"]
 
         return text, img_url
 
@@ -76,7 +77,7 @@ def main():
     for name, url in ACCOUNTS.items():
         print(f"\n--- {name} ---")
 
-        result = fetch_latest(name, url)
+        result = fetch_latest(url)
 
         if not result:
             print("投稿なし")
@@ -84,9 +85,8 @@ def main():
 
         text, img = result
 
-        # 🔥 重複チェック
         if history.get(name) == text:
-            print("重複のためスキップ")
+            print("重複スキップ")
             continue
 
         print("新規投稿:", text[:30])
