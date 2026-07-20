@@ -1,203 +1,114 @@
 import requests
-import feedparser
-import json
+from bs4 import BeautifulSoup
 import os
-import re
-
-print("===== START =====")
-
-WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
-
-def clean_html(text):
-    text = re.sub(r'<br\s*/?>', '\n', text)
-    text = re.sub(r'</p>', '\n', text)
-    text = re.sub('<.*?>', '', text)
-    text = re.sub(r'http\S+', '', text)
-    text = re.sub(r'\n+', '\n', text)
-    return text.strip()
-
-def get_image(entry):
-    if "media_content" in entry:
-        return entry.media_content[0]["url"]
-
-    if "links" in entry:
-        for link in entry.links:
-            if link.get("type", "").startswith("image"):
-                return link.get("href")
-
-    match = re.search(r'<img.*?src="(.*?)"', entry.summary)
-    if match:
-        return match.group(1)
-
-    return None
-
-# フィード読み込み
-with open("feeds.json", "r", encoding="utf-8") as f:
-    feeds = json.load(f)
-
-# 送信履歴読み込み
-try:
-    with open("sent.json", "r", encoding="utf-8") as f:
-        sent = json.load(f)
-except:
-    sent = {}
-
-updated = False
-
-for feed in feeds:
-    name = feed["name"]
-    url = feed["rss"]
-
-    print(f"\n--- {name} ---")
-
-    parsed = feedparser.parse(url)
-
-    if not parsed.entries:
-        print("記事なし")
-        continue
-
-    latest = parsed.entries[0]
-    post_id = latest.link
-
-    if sent.get(name) != post_id:
-        description = clean_html(latest.summary)
-        image_url = get_image(latest)
-
-        embed = {
-            "title": latest.title,
-            "url": latest.link,
-            "description": description[:200],
-            "color": 5814783,
-            "footer": {"text": name}
-        }
-
-        if image_url:
-            embed["image"] = {"url": image_url}
-
-        res = requests.post(WEBHOOK_URL, json={"embeds": [embed]})
-        print("送信:", res.status_code)
-
-        if res.status_code == 204:
-            sent[name] = post_id
-            updated = True
-
-# 保存
-if updated:
-    with open("sent.json", "w", encoding="utf-8") as f:
-        json.dump(sent, f, ensure_ascii=False, indent=2)
-
-print("===== END =====")import requests
-import feedparser
 import json
-import os
-import re
 
-print("===== START =====")
+WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 
-WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
+# チェック対象サイト
+SITES = [
+    ("ポケモンGO攻略情報＠ポケマピ", "https://nitter.net/search?f=tweets&q=%23ポケモンGO"),
+    ("ポケらく＠ポケモンアプリ情報", "https://nitter.net/pokelaku")
+]
 
-# ✅ HTML整形（改行・URL除去）
-def clean_html(text):
-    # 改行タグを改行に変換
-    text = re.sub(r'<br\s*/?>', '\n', text)
-    text = re.sub(r'</p>', '\n', text)
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
-    # HTMLタグ削除
-    text = re.sub('<.*?>', '', text)
+SEEN_FILE = "seen.json"
 
-    # URL削除
-    text = re.sub(r'http\S+', '', text)
+# 既読データ読み込み
+def load_seen():
+    if os.path.exists(SEEN_FILE):
+        with open(SEEN_FILE, "r") as f:
+            return set(json.load(f))
+    return set()
 
-    # 余計な空白整理
-    text = re.sub(r'\n+', '\n', text)
+# 既読データ保存
+def save_seen(seen):
+    with open(SEEN_FILE, "w") as f:
+        json.dump(list(seen), f)
 
-    return text.strip()
+# Nitter画像URL → Twitter CDNに変換
+def fix_image_url(url):
+    if url and "nitter.net/pic/" in url:
+        url = url.replace("https://nitter.net/pic/", "")
+        url = url.replace("%2F", "/")
+        return f"https://pbs.twimg.com/{url}"
+    return url
 
-# ✅ 画像取得（可能な限り）
-def get_image(entry):
-    # media:content
-    if "media_content" in entry:
-        return entry.media_content[0]["url"]
+# 投稿取得
+def get_posts(url):
+    res = requests.get(url, headers=HEADERS)
+    soup = BeautifulSoup(res.text, "html.parser")
+    items = soup.select(".timeline-item")
+    
+    posts = []
+    for item in items[:5]:
+        text_el = item.select_one(".tweet-content")
+        link_el = item.select_one("a.tweet-link")
+        img_el = item.select_one("img")
 
-    # enclosure
-    if "links" in entry:
-        for link in entry.links:
-            if link.get("type", "").startswith("image"):
-                return link.get("href")
+        text = text_el.text.strip() if text_el else ""
+        link = "https://nitter.net" + link_el["href"] if link_el else ""
+        img = img_el["src"] if img_el else None
 
-    # HTML内img
-    match = re.search(r'<img.*?src="(.*?)"', entry.summary)
-    if match:
-        return match.group(1)
+        if img:
+            img = "https://nitter.net" + img
 
-    return None
+        img = fix_image_url(img)
 
-# フィード読み込み
-with open("feeds.json", "r", encoding="utf-8") as f:
-    feeds = json.load(f)
-
-# 送信済み
-try:
-    with open("sent.json", "r", encoding="utf-8") as f:
-        sent = json.load(f)
-except:
-    sent = {}
-
-updated = False
-
-for feed in feeds:
-    name = feed["name"]
-    url = feed["rss"]
-
-    print(f"\n--- {name} ---")
-
-    parsed = feedparser.parse(url)
-
-    if not parsed.entries:
-        print("❌ 記事なし")
-        continue
-
-    latest = parsed.entries[0]
-    post_id = latest.link
-
-    if sent.get(name) != post_id:
-
-        description = clean_html(latest.summary)
-        image_url = get_image(latest)
-
-        # 👉 読みやすくする
-        description = description[:200]
-
-        embed = {
-            "title": latest.title,
-            "url": latest.link,
-            "description": description,
-            "color": 5814783,
-            "footer": {
-                "text": name
-            }
-        }
-
-        # 画像があれば追加
-        if image_url:
-            embed["image"] = {"url": image_url}
-            print("画像:", image_url)
-        else:
-            print("画像なし")
-
-        res = requests.post(WEBHOOK_URL, json={
-            "embeds": [embed]
+        posts.append({
+            "text": text,
+            "link": link,
+            "img": img
         })
 
-        print("送信:", res.status_code)
+    return posts
 
-        if res.status_code == 204:
-            sent[name] = post_id
-            updated = True
+# Discord送信
+def send(post, site_name):
+    content = f"【{site_name}】\n{post['text']}\n{post['link']}"
 
-# 保存
-if updated:
-    with open("sent.json", "w", encoding="utf-8") as f:
-        json.dump(sent, f, ensure_ascii=False, indent=2)
+    data = {
+        "content": content
+    }
 
-print("===== END =====")
+    # 画像がある場合はembedで送る
+    if post["img"]:
+        data["embeds"] = [
+            {
+                "image": {"url": post["img"]}
+            }
+        ]
+
+    res = requests.post(WEBHOOK_URL, json=data)
+    print(f"送信: {res.status_code}")
+
+# メイン処理
+def main():
+    print("===== START =====")
+
+    seen = load_seen()
+    new_seen = set(seen)
+
+    for name, url in SITES:
+        print(f"\n--- {name} ---")
+        posts = get_posts(url)
+
+        for post in posts:
+            if post["link"] in seen:
+                continue
+
+            print(post["text"])
+            send(post, name)
+
+            new_seen.add(post["link"])
+
+    save_seen(new_seen)
+
+    print("===== END =====")
+
+
+if __name__ == "__main__":
+    main()
