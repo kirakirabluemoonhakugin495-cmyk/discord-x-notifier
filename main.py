@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import json
+import difflib
 
 WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
 
@@ -11,7 +12,7 @@ HEADERS = {
 
 SITES = {
     "ぽけらく(イベント)": "https://pokemongo-raku.com/postcategory/event",
-    "ぽけらく(フィールドリサーチ)": "https://pokemongo-raku.com/post4966"
+    "フィールドリサーチ": "https://pokemongo-raku.com/post4966"
 }
 
 HISTORY_FILE = "history.json"
@@ -52,42 +53,71 @@ def fetch_list(url):
     return articles
 
 
-# 🔴 固定ページ（更新検知）
-def fetch_single(url):
+# 🔴 差分検出（神）
+def fetch_diff(url, history):
     res = requests.get(url, headers=HEADERS)
     soup = BeautifulSoup(res.text, "html.parser")
 
+    # 不要部分削除
+    for tag in soup(["script", "style"]):
+        tag.decompose()
+
+    content = soup.get_text(separator="\n").strip()
+
+    old_content = history.get("diff_content", "")
+
+    diff = difflib.unified_diff(
+        old_content.splitlines(),
+        content.splitlines(),
+        lineterm=""
+    )
+
+    changes = []
+    for line in diff:
+        if line.startswith("+") and not line.startswith("+++"):
+            changes.append(line[1:])
+
+    # 更新保存
+    history["diff_content"] = content
+
+    return changes[:20], soup
+
+
+def send_discord_event(name, articles):
+    content = f"📢 **{name} 更新情報**\n\n"
+    embeds = []
+
+    for art in articles:
+        content += f"🔹 {art['title']}\n{art['link']}\n\n"
+
+        if art["img"]:
+            embeds.append({"image": {"url": art["img"]}})
+
+    data = {"content": content[:1800]}
+    if embeds:
+        data["embeds"] = embeds[:10]
+
+    requests.post(WEBHOOK_URL, json=data)
+
+
+def send_discord_diff(changes, soup):
     title = soup.select_one("h1").text.strip()
 
     img_tag = soup.select_one("img")
     img = img_tag.get("src") if img_tag else None
 
-    return [{
-        "title": title,
-        "link": url,
-        "img": img
-    }]
+    content = "🆕 **フィールドリサーチ更新！**\n\n"
 
-
-def send_discord(name, new_articles):
-    content = f"📢 **{name} 更新情報**\n\n"
-    embeds = []
-
-    for art in new_articles:
-        content += f"🔹 {art['title']}\n{art['link']}\n\n"
-
-        if art["img"]:
-            embeds.append({
-                "image": {"url": art["img"]}
-            })
+    for c in changes:
+        if c.strip():
+            content += f"＋ {c.strip()}\n"
 
     data = {"content": content[:1800]}
 
-    if embeds:
-        data["embeds"] = embeds[:10]
+    if img:
+        data["embeds"] = [{"image": {"url": img}}]
 
-    res = requests.post(WEBHOOK_URL, json=data)
-    print("送信:", res.status_code)
+    requests.post(WEBHOOK_URL, json=data)
 
 
 def main():
@@ -95,30 +125,30 @@ def main():
 
     history = load_history()
 
-    for name, url in SITES.items():
-        print(f"\n--- {name} ---")
+    # 🔵 イベント
+    print("\n--- イベント ---")
+    articles = fetch_list(SITES["ぽけらく(イベント)"])
 
-        if "フィールドリサーチ" in name:
-            articles = fetch_single(url)
-        else:
-            articles = fetch_list(url)
+    old_titles = history.get("events", [])
+    new_articles = [a for a in articles if a["title"] not in old_titles]
 
-        old_titles = history.get(name, [])
-        new_articles = []
+    if new_articles:
+        print("イベント更新あり")
+        send_discord_event("イベント", new_articles)
+        history["events"] = [a["title"] for a in articles]
 
-        for art in articles:
-            if art["title"] not in old_titles:
-                new_articles.append(art)
+    else:
+        print("イベント更新なし")
 
-        if not new_articles:
-            print("更新なし")
-            continue
+    # 🔴 差分検出
+    print("\n--- フィールドリサーチ ---")
+    changes, soup = fetch_diff(SITES["フィールドリサーチ"], history)
 
-        print(f"{len(new_articles)}件の更新")
-
-        send_discord(name, new_articles)
-
-        history[name] = [a["title"] for a in articles]
+    if changes:
+        print(f"差分 {len(changes)}件")
+        send_discord_diff(changes, soup)
+    else:
+        print("差分なし")
 
     save_history(history)
 
