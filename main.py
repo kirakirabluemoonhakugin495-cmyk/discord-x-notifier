@@ -1,40 +1,35 @@
 import requests
 from bs4 import BeautifulSoup
 import os
-import json
+import hashlib
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
 
-# チェック対象サイト
 SITES = [
-    ("ポケモンGO攻略情報＠ポケマピ", "https://nitter.net/search?f=tweets&q=%23ポケモンGO"),
-    ("ポケらく＠ポケモンアプリ情報", "https://nitter.net/pokelaku")
+    ("ポケマピ", "https://nitter.net/search?f=tweets&q=%23ポケモンGO"),
+    ("ポケらく", "https://nitter.net/pokelaku")
 ]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-SEEN_FILE = "seen.json"
+# メモリ内重複防止（同一実行内）
+seen_hashes = set()
 
-# 既読データ読み込み
-def load_seen():
-    if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE, "r") as f:
-            return set(json.load(f))
-    return set()
-
-# 既読データ保存
-def save_seen(seen):
-    with open(SEEN_FILE, "w") as f:
-        json.dump(list(seen), f)
-
-# Nitter画像URL → Twitter CDNに変換
+# 🔧 画像URLを完全修正
 def fix_image_url(url):
-    if url and "nitter.net/pic/" in url:
-        url = url.replace("https://nitter.net/pic/", "")
-        url = url.replace("%2F", "/")
-        return f"https://pbs.twimg.com/{url}"
+    if not url:
+        return None
+
+    if "nitter.net/pic/" in url:
+        # デコード
+        path = url.split("pic/")[1]
+        path = path.replace("%2F", "/")
+
+        # media/xxxx.jpg → pbs.twimg.com/media/xxxx.jpg
+        return f"https://pbs.twimg.com/{path}"
+
     return url
 
 # 投稿取得
@@ -42,8 +37,9 @@ def get_posts(url):
     res = requests.get(url, headers=HEADERS)
     soup = BeautifulSoup(res.text, "html.parser")
     items = soup.select(".timeline-item")
-    
+
     posts = []
+
     for item in items[:5]:
         text_el = item.select_one(".tweet-content")
         link_el = item.select_one("a.tweet-link")
@@ -51,61 +47,61 @@ def get_posts(url):
 
         text = text_el.text.strip() if text_el else ""
         link = "https://nitter.net" + link_el["href"] if link_el else ""
-        img = img_el["src"] if img_el else None
+        img = None
 
-        if img:
-            img = "https://nitter.net" + img
+        if img_el and img_el.get("src"):
+            raw_img = "https://nitter.net" + img_el["src"]
+            img = fix_image_url(raw_img)
 
-        img = fix_image_url(img)
+        # 重複判定用ハッシュ
+        uid = hashlib.md5((text + link).encode()).hexdigest()
 
         posts.append({
             "text": text,
             "link": link,
-            "img": img
+            "img": img,
+            "id": uid
         })
 
     return posts
 
 # Discord送信
-def send(post, site_name):
-    content = f"【{site_name}】\n{post['text']}\n{post['link']}"
+def send(post, site):
+    content = f"【{site}】\n\n{post['text']}\n\n{post['link']}"
 
     data = {
         "content": content
     }
 
-    # 画像がある場合はembedで送る
-    if post["img"]:
+    # 画像が有効なときだけ付ける
+    if post["img"] and "pbs.twimg.com" in post["img"]:
         data["embeds"] = [
-            {
-                "image": {"url": post["img"]}
-            }
+            {"image": {"url": post["img"]}}
         ]
 
     res = requests.post(WEBHOOK_URL, json=data)
     print(f"送信: {res.status_code}")
 
-# メイン処理
+# メイン
 def main():
     print("===== START =====")
 
-    seen = load_seen()
-    new_seen = set(seen)
+    global seen_hashes
 
     for name, url in SITES:
         print(f"\n--- {name} ---")
         posts = get_posts(url)
 
         for post in posts:
-            if post["link"] in seen:
+            if post["id"] in seen_hashes:
                 continue
 
-            print(post["text"])
+            print("投稿:", post["text"][:30])
+            print("画像:", post["img"])
+
             send(post, name)
 
-            new_seen.add(post["link"])
-
-    save_seen(new_seen)
+            seen_hashes.add(post["id"])
 
     print("===== END =====")
 
