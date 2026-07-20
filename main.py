@@ -1,118 +1,101 @@
 import requests
 from bs4 import BeautifulSoup
 import os
-import hashlib
+import json
 
-WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
-
-SITES = [
-    ("ポケマピ", "https://nitter.poast.org/search?f=tweets&q=%23ポケモンGO"),
-    ("ポケらく", "https://nitter.poast.org/pokelaku")
-]
+WEBHOOK_URL = os.environ["DISCORD_WEBHOOK"]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-seen_hashes = set()
+ACCOUNTS = {
+    "ポケマピ": "https://nitter.net/pokemapi",
+    "ポケらく": "https://nitter.net/pokeraku_app"
+}
 
-# 画像URL修正（確実に表示できる形に）
-def fix_image_url(url):
-    if not url:
+HISTORY_FILE = "history.json"
+
+
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def save_history(history):
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history, f)
+
+
+def fetch_latest(account, url):
+    try:
+        res = requests.get(url, headers=HEADERS)
+        if res.status_code != 200:
+            print(f"取得失敗: {res.status_code}")
+            return None
+
+        soup = BeautifulSoup(res.text, "html.parser")
+        tweet = soup.select_one(".timeline-item")
+
+        if not tweet:
+            return None
+
+        text = tweet.select_one(".tweet-content").text.strip()
+        img_tag = tweet.select_one("img")
+
+        img_url = None
+        if img_tag:
+            img_url = "https://nitter.net" + img_tag["src"]
+
+        return text, img_url
+
+    except Exception as e:
+        print("エラー:", e)
         return None
 
-    if "nitter" in url and "/pic/" in url:
-        path = url.split("/pic/")[1]
-        path = path.replace("%2F", "/")
-        return f"https://pbs.twimg.com/{path}"
 
-    return url
-
-# 投稿取得（安定版）
-def get_posts(url):
-    res = requests.get(url, headers=HEADERS)
-
-    if res.status_code != 200:
-        print("取得失敗:", res.status_code)
-        return []
-
-    soup = BeautifulSoup(res.text, "html.parser")
-
-    items = soup.select("div.timeline-item")
-
-    posts = []
-
-    for item in items[:5]:
-        text_el = item.select_one(".tweet-content")
-        link_el = item.select_one("a.tweet-link")
-        img_el = item.select_one("img[src*='media']")
-
-        text = text_el.text.strip() if text_el else ""
-        link = "https://nitter.poast.org" + link_el["href"] if link_el else ""
-        img = None
-
-        if img_el and img_el.get("src"):
-            raw = "https://nitter.poast.org" + img_el["src"]
-            img = fix_image_url(raw)
-
-        if not text:
-            continue
-
-        uid = hashlib.md5((text + link).encode()).hexdigest()
-
-        posts.append({
-            "id": uid,
-            "text": text,
-            "link": link,
-            "img": img
-        })
-
-    return posts
-
-# Discord送信
-def send(post, site):
-    content = f"【{site}】\n\n{post['text']}\n\n{post['link']}"
-
+def send_discord(title, text, img):
     data = {
-        "content": content
+        "content": f"--- {title} ---\n{text}"
     }
 
-    # 画像が有効なときだけ送る
-    if post["img"] and "pbs.twimg.com" in post["img"]:
-        data["embeds"] = [
-            {
-                "image": {"url": post["img"]}
-            }
-        ]
+    if img:
+        data["embeds"] = [{"image": {"url": img}}]
 
     res = requests.post(WEBHOOK_URL, json=data)
     print("送信:", res.status_code)
 
-# メイン処理
+
 def main():
     print("===== START =====")
 
-    global seen_hashes
+    history = load_history()
 
-    for name, url in SITES:
+    for name, url in ACCOUNTS.items():
         print(f"\n--- {name} ---")
 
-        posts = get_posts(url)
+        result = fetch_latest(name, url)
 
-        if not posts:
+        if not result:
             print("投稿なし")
             continue
 
-        for post in posts:
-            if post["id"] in seen_hashes:
-                continue
+        text, img = result
 
-            print("投稿:", post["text"][:30])
-            print("画像:", post["img"])
+        # 🔥 重複チェック
+        if history.get(name) == text:
+            print("重複のためスキップ")
+            continue
 
-            send(post, name)
+        print("新規投稿:", text[:30])
 
-            seen_hashes.add(post["id"])
+        send_discord(name, text, img)
+
+        history[name] = text
+
+    save_history(history)
 
     print("===== END =====")
 
