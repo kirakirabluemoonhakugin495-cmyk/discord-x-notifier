@@ -30,11 +30,10 @@ def get_jst():
 
 
 # -----------------------
-# 10時台チェック
+# 10時台のみ実行
 # -----------------------
 def is_target_hour():
-    jst = get_jst()
-    return jst.hour == 10
+    return get_jst().hour == 10
 
 
 # -----------------------
@@ -46,7 +45,7 @@ def already_sent_today(history):
 
 
 # -----------------------
-# history
+# history読み書き
 # -----------------------
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -61,7 +60,7 @@ def save_history(data):
 
 
 # -----------------------
-# 画像取得
+# 記事ページから画像取得
 # -----------------------
 def get_image(url):
     try:
@@ -71,7 +70,6 @@ def get_image(url):
         og = soup.select_one('meta[property="og:image"]')
         if og:
             return og.get("content")
-
     except:
         pass
 
@@ -79,7 +77,7 @@ def get_image(url):
 
 
 # -----------------------
-# 記事取得
+# 記事一覧取得
 # -----------------------
 def get_articles(url):
     try:
@@ -143,7 +141,7 @@ def send_discord(name, articles):
 
 
 # -----------------------
-# main
+# メイン処理
 # -----------------------
 def main():
 
@@ -151,12 +149,12 @@ def main():
 
     history = load_history()
 
-    # ★ 10時台以外はスキップ
+    # 10時台以外は終了
     if not is_target_hour():
         print("10時台以外のためスキップ")
         return
 
-    # ★ 今日すでに送信済みならスキップ
+    # すでに送信済みなら終了
     if already_sent_today(history):
         print("今日はすでに送信済み")
         return
@@ -189,7 +187,7 @@ def main():
 
         history[name] = [a["url"] for a in articles]
 
-    # ★ 何か送った場合のみ日付更新
+    # 送信した日にちを記録
     if any_sent:
         history["last_sent_date"] = get_jst().strftime("%Y-%m-%d")
 
@@ -198,5 +196,8 @@ def main():
     print("===== END =====")
 
 
+# -----------------------
+# エントリーポイント（★ここ重要）
+# -----------------------
 if __name__ == "__main__":
-    main()    main()
+    main()
