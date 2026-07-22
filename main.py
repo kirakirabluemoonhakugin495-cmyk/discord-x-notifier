@@ -23,11 +23,26 @@ HISTORY_FILE = "history.json"
 
 
 # -----------------------
-# 時間制御（最重要）
+# JST取得
 # -----------------------
-def is_morning_10():
-    jst = datetime.utcnow() + timedelta(hours=9)
+def get_jst():
+    return datetime.utcnow() + timedelta(hours=9)
+
+
+# -----------------------
+# 10時台チェック
+# -----------------------
+def is_target_hour():
+    jst = get_jst()
     return jst.hour == 10
+
+
+# -----------------------
+# 本日送信済みチェック
+# -----------------------
+def already_sent_today(history):
+    today = get_jst().strftime("%Y-%m-%d")
+    return history.get("last_sent_date") == today
 
 
 # -----------------------
@@ -86,7 +101,6 @@ def get_articles(url):
 
         href = link.get("href")
 
-        # 空URLや広告除外
         if not href or "javascript" in href:
             continue
 
@@ -120,12 +134,11 @@ def send_discord(name, articles):
         embeds.append(embed)
 
     data = {
-        "content": f"📢 **{name} 最新情報（10時更新）**",
+        "content": f"📢 **{name} 最新情報（本日まとめ）**",
         "embeds": embeds[:10]
     }
 
     res = requests.post(WEBHOOK_URL, json=data)
-
     print("Discord:", res.status_code)
 
 
@@ -136,12 +149,19 @@ def main():
 
     print("===== START =====")
 
-    # ★ 最重要：10時以外は絶対止める
-    if not is_morning_10():
-        print("10時以外のためスキップ")
+    history = load_history()
+
+    # ★ 10時台以外はスキップ
+    if not is_target_hour():
+        print("10時台以外のためスキップ")
         return
 
-    history = load_history()
+    # ★ 今日すでに送信済みならスキップ
+    if already_sent_today(history):
+        print("今日はすでに送信済み")
+        return
+
+    any_sent = False
 
     for name, url in SITE.items():
 
@@ -155,7 +175,6 @@ def main():
 
         old = history.get(name, [])
 
-        # 新しい記事のみ
         new_articles = [
             a for a in articles
             if a["url"] not in old
@@ -164,13 +183,15 @@ def main():
         if new_articles:
             print(len(new_articles), "件送信")
             send_discord(name, new_articles)
+            any_sent = True
         else:
             print("新規なし")
 
-        # 最新状態保存
-        history[name] = [
-            a["url"] for a in articles
-        ]
+        history[name] = [a["url"] for a in articles]
+
+    # ★ 何か送った場合のみ日付更新
+    if any_sent:
+        history["last_sent_date"] = get_jst().strftime("%Y-%m-%d")
 
     save_history(history)
 
@@ -178,4 +199,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()    main()
