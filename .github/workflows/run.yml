@@ -2,7 +2,7 @@ name: Run Bot
 
 on:
   schedule:
-    - cron: '0 1 * * *'  # 日本時間10時
+    - cron: '0 * * * *'   # 毎時実行
   workflow_dispatch:
 
 jobs:
